@@ -34,6 +34,7 @@ Ensure the top and bottom are properly distorted for spherical mapping and the l
 Note: The final output image MUST NOT contain any visible grid lines. (注：最终输出图片绝对不能包含任何可见的网格线。)`);
   const [finalPanorama, setFinalPanorama] = useState<string | null>(null);
   const [imageSize, setImageSize] = useState<"1K" | "2K" | "4K">("1K");
+  const [selectedModel, setSelectedModel] = useState("gemini-3-pro-image-preview");
   const [status, setStatus] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   
@@ -85,14 +86,12 @@ Note: The final output image MUST NOT contain any visible grid lines. (注：最
   };
 
   const handleLoadDemo = () => {
-    // Construct absolute URL for the local demo image to ensure Vite picks it up
     const demoUrl = window.location.origin + "/demo-panorama.png";
     const gridUrl = window.location.origin + "/grid-reference.jpg";
     
     console.log("Loading demo from:", demoUrl);
     setFinalPanorama(demoUrl);
     
-    // Set default grid image from public assets
     fetch(gridUrl)
       .then(res => res.blob())
       .then(blob => {
@@ -117,19 +116,16 @@ Note: The final output image MUST NOT contain any visible grid lines. (注：最
     
     try {
       const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) {
-        throw new Error("GEMINI_API_KEY 未配置，请检查环境。");
-      }
+      if (!apiKey) throw new Error("GEMINI_API_KEY 未配置");
       
       const ai = new GoogleGenAI({ apiKey });
-
-      // Directly go to Panorama Generation
       setStatus("正在绘制全景图...");
       
-      const generationParts: any[] = [];
+      // Construct parts starting with the text prompt (following official example)
+      const parts: any[] = [{ text: fusedDescription }];
       
-      // 1. Add Environment Reference Images
-      const referenceParts: any[] = await Promise.all(sourceImages.map(async (file) => {
+      // Add Environment Reference Images
+      const envParts = await Promise.all(sourceImages.map(async (file) => {
         const base64 = await fileToBase64(file);
         return {
           inlineData: {
@@ -138,12 +134,12 @@ Note: The final output image MUST NOT contain any visible grid lines. (注：最
           }
         };
       }));
-      generationParts.push(...referenceParts);
+      parts.push(...envParts);
 
-      // 2. Add Grid Reference if exists
+      // Add Grid Reference for geometric correction
       if (gridImage) {
         const gridBase64 = await fileToBase64(gridImage);
-        generationParts.push({
+        parts.push({
           inlineData: {
             data: gridBase64.split(',')[1],
             mimeType: gridImage.type
@@ -151,42 +147,35 @@ Note: The final output image MUST NOT contain any visible grid lines. (注：最
         });
       }
 
-      // 3. Add the Prompt from the textarea
-      generationParts.push({ text: fusedDescription });
-
-      const imageResponse = await ai.models.generateContent({
-        model: 'gemini-3-pro-image-preview',
-        contents: {
-          parts: generationParts
-        },
+      const response = await ai.models.generateContent({
+        model: selectedModel,
+        contents: [{ role: 'user', parts: parts }],
         config: {
           imageConfig: {
-            aspectRatio: "2:1",
+            aspectRatio: "21:9",
             imageSize: imageSize
           }
         }
       });
 
-      let generatedUrl = null;
-      for (const part of imageResponse.candidates?.[0]?.content?.parts || []) {
+      let genUrl = null;
+      for (const part of response.candidates?.[0]?.content?.parts || []) {
         if (part.inlineData) {
-          const base64EncodeString = part.inlineData.data;
-          generatedUrl = `data:image/png;base64,${base64EncodeString}`;
+          genUrl = `data:image/png;base64,${part.inlineData.data}`;
           break;
         }
       }
 
-      if (generatedUrl) {
-        setFinalPanorama(generatedUrl);
+      if (genUrl) {
+        setFinalPanorama(genUrl);
         setStatus("生成完成！");
       } else {
         throw new Error("未能生成图片");
       }
 
     } catch (error: any) {
-      console.error("生成失败，详细错误信息：", error);
-      const errorMsg = error?.message || "处理失败，请重试";
-      setStatus(`处理失败: ${errorMsg}`);
+      console.error("生成失败:", error);
+      setStatus(`处理失败: ${error?.message || "请检查配置"}`);
     } finally {
       setIsProcessing(false);
     }
@@ -198,47 +187,51 @@ Note: The final output image MUST NOT contain any visible grid lines. (注：最
     setStatus("正在编辑全景图...");
     
     try {
-      const userAi = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) throw new Error("GEMINI_API_KEY 未配置");
       
+      const ai = new GoogleGenAI({ apiKey });
       const base64Data = finalPanorama.split(',')[1];
       const mimeType = finalPanorama.split(';')[0].split(':')[1];
 
-      const response = await userAi.models.generateContent({
-        model: 'gemini-3-pro-image-preview',
-        contents: {
-          parts: [
-            {
-              inlineData: {
-                data: base64Data,
-                mimeType: mimeType,
-              },
-            },
-            {
-              text: editPrompt,
-            },
-          ],
-        },
+      const parts: any[] = [
+        { text: editPrompt },
+        {
+          inlineData: {
+            data: base64Data,
+            mimeType: mimeType,
+          },
+        }
+      ];
+
+      const response = await ai.models.generateContent({
+        model: selectedModel,
+        contents: [{ role: 'user', parts: parts }],
+        config: {
+          imageConfig: {
+            aspectRatio: "21:9",
+          }
+        }
       });
 
-      let editedUrl = null;
+      let editUrl = null;
       for (const part of response.candidates?.[0]?.content?.parts || []) {
         if (part.inlineData) {
-          const base64EncodeString = part.inlineData.data;
-          editedUrl = `data:image/png;base64,${base64EncodeString}`;
+          editUrl = `data:image/png;base64,${part.inlineData.data}`;
           break;
         }
       }
 
-      if (editedUrl) {
-        setFinalPanorama(editedUrl);
+      if (editUrl) {
+        setFinalPanorama(editUrl);
         setStatus("编辑完成！");
         setEditPrompt("");
       } else {
         throw new Error("未能编辑图片");
       }
-    } catch (error) {
-      console.error(error);
-      setStatus("编辑失败");
+    } catch (error: any) {
+      console.error("编辑失败:", error);
+      setStatus(`编辑失败: ${error?.message || "请检查配置"}`);
     } finally {
       setIsEditing(false);
     }
@@ -289,6 +282,14 @@ Note: The final output image MUST NOT contain any visible grid lines. (注：最
               <PlayCircle className="w-5 h-5" />
               加载演示
             </button>
+            <select
+              value={selectedModel}
+              onChange={(e) => setSelectedModel(e.target.value)}
+              className="bg-zinc-900 border border-zinc-800 text-zinc-200 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5 outline-none"
+            >
+              <option value="gemini-3-pro-image-preview">Gemini 3 Pro Image</option>
+              <option value="gemini-3.1-flash-image-preview">Gemini 3.1 Flash Image</option>
+            </select>
             <select
               value={imageSize}
               onChange={(e) => setImageSize(e.target.value as any)}
