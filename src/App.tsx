@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { GoogleGenAI } from '@google/genai';
-import { Upload, Image as ImageIcon, Loader2, Settings, Key, Maximize, Edit2, Trash2, Grid } from 'lucide-react';
+import { Upload, Image as ImageIcon, Loader2, Settings, Key, Maximize, Edit2, Trash2, Grid, PlayCircle } from 'lucide-react';
 import PhotoSphereViewerComponent from './components/PhotoSphereViewer';
 import { cn } from './lib/utils';
 
@@ -26,7 +26,12 @@ export default function App() {
   const [hasKey, setHasKey] = useState(false);
   const [sourceImages, setSourceImages] = useState<File[]>([]);
   const [gridImage, setGridImage] = useState<File | null>(null);
-  const [fusedDescription, setFusedDescription] = useState("");
+  const [fusedDescription, setFusedDescription] = useState(`Create a high-quality, seamless, equirectangular 360-degree panorama image. (创建一个高质量、无缝的、等距柱状投影 360 度全景图像。)
+The style should be a professional HDRI environment map. (风格应为专业的 HDRI 环境贴图。)
+Subject: \${参考@[图片1] ， 参考equirectangular grid @[图片2] }. (主体内容：\${参考@[图片1] ， 参考equirectangular grid @[图片2] }。)
+Ensure the image has a 2:1 aspect ratio. (确保图像比例为 2:1。)
+Ensure the top and bottom are properly distorted for spherical mapping and the left/right edges wrap perfectly. (确保顶部和底部针对球形映射进行了正确的畸变处理，且左右边缘完美衔接。)
+Note: The final output image MUST NOT contain any visible grid lines. (注：最终输出图片绝对不能包含任何可见的网格线。)`);
   const [finalPanorama, setFinalPanorama] = useState<string | null>(null);
   const [imageSize, setImageSize] = useState<"1K" | "2K" | "4K">("1K");
   const [status, setStatus] = useState("");
@@ -45,6 +50,20 @@ export default function App() {
       }
     };
     checkKey();
+
+    // Load default grid reference image on mount
+    const loadDefaultGrid = async () => {
+      const gridUrl = window.location.origin + "/grid-reference.jpg";
+      try {
+        const res = await fetch(gridUrl);
+        const blob = await res.blob();
+        const file = new File([blob], "grid-reference.jpg", { type: "image/jpeg" });
+        setGridImage(file);
+      } catch (err) {
+        console.error("Failed to load default grid reference:", err);
+      }
+    };
+    loadDefaultGrid();
   }, []);
 
   const handleSelectKey = async () => {
@@ -65,16 +84,52 @@ export default function App() {
     setSourceImages(prev => prev.filter((_, i) => i !== index));
   };
 
+  const handleLoadDemo = () => {
+    // Construct absolute URL for the local demo image to ensure Vite picks it up
+    const demoUrl = window.location.origin + "/demo-panorama.png";
+    const gridUrl = window.location.origin + "/grid-reference.jpg";
+    
+    console.log("Loading demo from:", demoUrl);
+    setFinalPanorama(demoUrl);
+    
+    // Set default grid image from public assets
+    fetch(gridUrl)
+      .then(res => res.blob())
+      .then(blob => {
+        const file = new File([blob], "grid-reference.jpg", { type: "image/jpeg" });
+        setGridImage(file);
+      });
+
+    setStatus("已加载演示全景图与网格参考");
+    
+    const demoDescription = "一个极具电影感的 360° 全景蒸汽朋克场景。主体是一颗带有宏伟环系的巨大行星，背景布满了飞行的飞艇、错落有致的砖石与金属构筑的塔楼，呈现出史诗般的环境。";
+    setFusedDescription(`Create a high-quality, seamless, equirectangular 360-degree panorama image. (创建一个高质量、无缝的、等距柱状投影 360 度全景图像。)
+The style should be a professional HDRI environment map. (风格应为专业的 HDRI 环境贴图。)
+Subject: ${demoDescription}. (主体内容：${demoDescription}。)
+Ensure the image has a 2:1 aspect ratio. (确保图像比例为 2:1。)
+Ensure the top and bottom are properly distorted for spherical mapping and the left/right edges wrap perfectly. (确保顶部和底部针对球形映射进行了正确的畸变处理，且左右边缘完美衔接。)
+Note: The final output image MUST NOT contain any visible grid lines. (注：最终输出图片绝对不能包含任何可见的网格线。)`);
+  };
+
   const handleGenerate = async () => {
     if (sourceImages.length === 0) return;
     setIsProcessing(true);
     
     try {
-      // Step 1: Scene Analysis
-      setStatus("正在识别场景...");
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        throw new Error("GEMINI_API_KEY 未配置，请检查环境。");
+      }
       
-      const parts: any[] = await Promise.all(sourceImages.map(async (file) => {
+      const ai = new GoogleGenAI({ apiKey });
+
+      // Directly go to Panorama Generation
+      setStatus("正在绘制全景图...");
+      
+      const generationParts: any[] = [];
+      
+      // 1. Add Environment Reference Images
+      const referenceParts: any[] = await Promise.all(sourceImages.map(async (file) => {
         const base64 = await fileToBase64(file);
         return {
           inlineData: {
@@ -83,32 +138,9 @@ export default function App() {
           }
         };
       }));
+      generationParts.push(...referenceParts);
 
-      parts.push({
-        text: `基于输入图像的精准、客观、无幻觉、无脑补地对输入图片进行结构化描述`
-      });
-
-      const analysisResponse = await ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
-        contents: { parts }
-      });
-
-      const description = analysisResponse.text || "";
-      setFusedDescription(description);
-
-      // Step 2: Panorama Generation
-      setStatus("正在绘制全景图...");
-      const userAi = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      
-      const prompt = `Create a high-quality, seamless, equirectangular 360-degree panorama image. 
-The style should be a professional HDRI environment map. 
-Subject: ${description}, referencing the equirectangular grid structure. 
-Ensure the image has a 2:1 aspect ratio.
-Ensure the top and bottom are properly distorted for spherical mapping and the left/right edges wrap perfectly.
-最终输出图片不要有网格线`;
-
-      const generationParts: any[] = [{ text: prompt }];
-      
+      // 2. Add Grid Reference if exists
       if (gridImage) {
         const gridBase64 = await fileToBase64(gridImage);
         generationParts.push({
@@ -119,14 +151,17 @@ Ensure the top and bottom are properly distorted for spherical mapping and the l
         });
       }
 
-      const imageResponse = await userAi.models.generateContent({
+      // 3. Add the Prompt from the textarea
+      generationParts.push({ text: fusedDescription });
+
+      const imageResponse = await ai.models.generateContent({
         model: 'gemini-3-pro-image-preview',
         contents: {
           parts: generationParts
         },
         config: {
           imageConfig: {
-            aspectRatio: "16:9",
+            aspectRatio: "2:1",
             imageSize: imageSize
           }
         }
@@ -148,9 +183,10 @@ Ensure the top and bottom are properly distorted for spherical mapping and the l
         throw new Error("未能生成图片");
       }
 
-    } catch (error) {
-      console.error(error);
-      setStatus("处理失败，请重试");
+    } catch (error: any) {
+      console.error("生成失败，详细错误信息：", error);
+      const errorMsg = error?.message || "处理失败，请重试";
+      setStatus(`处理失败: ${errorMsg}`);
     } finally {
       setIsProcessing(false);
     }
@@ -162,13 +198,13 @@ Ensure the top and bottom are properly distorted for spherical mapping and the l
     setStatus("正在编辑全景图...");
     
     try {
-      const userAi = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const userAi = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
       
       const base64Data = finalPanorama.split(',')[1];
       const mimeType = finalPanorama.split(';')[0].split(':')[1];
 
       const response = await userAi.models.generateContent({
-        model: 'gemini-3.1-flash-image-preview',
+        model: 'gemini-3-pro-image-preview',
         contents: {
           parts: [
             {
@@ -246,6 +282,13 @@ Ensure the top and bottom are properly distorted for spherical mapping and the l
             <p className="text-zinc-400 mt-1">专业级全景环境贴图生成器</p>
           </div>
           <div className="flex items-center gap-4">
+            <button
+              onClick={handleLoadDemo}
+              className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-medium py-2.5 px-4 rounded-xl transition-colors flex items-center gap-2 border border-zinc-700"
+            >
+              <PlayCircle className="w-5 h-5" />
+              加载演示
+            </button>
             <select
               value={imageSize}
               onChange={(e) => setImageSize(e.target.value as any)}
@@ -265,6 +308,19 @@ Ensure the top and bottom are properly distorted for spherical mapping and the l
             </button>
           </div>
         </header>
+
+        {/* Top: Immersive 360 Viewer */}
+        {finalPanorama && (
+          <section className="bg-zinc-900/30 border border-zinc-800/50 rounded-3xl p-2 shadow-2xl backdrop-blur-sm">
+            <div className="bg-zinc-950 rounded-2xl overflow-hidden relative">
+              <div className="absolute top-4 left-4 z-10 bg-black/50 backdrop-blur-md border border-white/10 rounded-full px-4 py-2 flex items-center gap-2 shadow-lg">
+                <Maximize className="w-4 h-4 text-orange-400" />
+                <span className="text-sm font-medium text-white tracking-wide">沉浸式 360° 预览</span>
+              </div>
+              <PhotoSphereViewerComponent src={finalPanorama} />
+            </div>
+          </section>
+        )}
 
         <main className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Left Column: Upload & Description */}
@@ -406,17 +462,6 @@ Ensure the top and bottom are properly distorted for spherical mapping and the l
             </section>
           </div>
         </main>
-
-        {/* Bottom: 360 Viewer */}
-        {finalPanorama && (
-          <section className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6">
-            <h2 className="text-lg font-medium mb-4 flex items-center gap-2">
-              <Maximize className="w-5 h-5 text-orange-400" />
-              沉浸式 360° 预览
-            </h2>
-            <PhotoSphereViewerComponent src={finalPanorama} />
-          </section>
-        )}
       </div>
     </div>
   );
