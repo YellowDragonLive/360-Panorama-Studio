@@ -1,0 +1,5 @@
+{
+  "name": "360° Panorama Studio",
+  "description": "专业级 360° 全景图生成工具，支持多图场景识别与融合，生成高质量 HDRI 环境贴图。",
+  "requestFramePermissions": []
+}
