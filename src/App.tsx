@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import { Upload, Image as ImageIcon, Loader2, Settings, Key, Maximize, Edit2, Trash2, Grid, PlayCircle } from 'lucide-react';
 import PhotoSphereViewerComponent from './components/PhotoSphereViewer';
-import { cn } from './lib/utils';
+import { cn, padImageTo21Ratio } from './lib/utils';
 
 declare global {
   interface Window {
@@ -85,12 +85,20 @@ Note: The final output image MUST NOT contain any visible grid lines. (注：最
     setSourceImages(prev => prev.filter((_, i) => i !== index));
   };
 
-  const handleLoadDemo = () => {
+  const handleLoadDemo = async () => {
     const demoUrl = window.location.origin + "/demo-panorama.png";
     const gridUrl = window.location.origin + "/grid-reference.jpg";
     
     console.log("Loading demo from:", demoUrl);
-    setFinalPanorama(demoUrl);
+    
+    setStatus("正在预处理演示全景图...");
+    try {
+      // Test the padding logic even for the demo
+      const paddedDemo = await padImageTo21Ratio(demoUrl);
+      setFinalPanorama(paddedDemo);
+    } catch (e) {
+      setFinalPanorama(demoUrl);
+    }
     
     fetch(gridUrl)
       .then(res => res.blob())
@@ -121,10 +129,8 @@ Note: The final output image MUST NOT contain any visible grid lines. (注：最
       const ai = new GoogleGenAI({ apiKey });
       setStatus("正在绘制全景图...");
       
-      // Construct parts starting with the text prompt (following official example)
       const parts: any[] = [{ text: fusedDescription }];
       
-      // Add Environment Reference Images
       const envParts = await Promise.all(sourceImages.map(async (file) => {
         const base64 = await fileToBase64(file);
         return {
@@ -136,7 +142,6 @@ Note: The final output image MUST NOT contain any visible grid lines. (注：最
       }));
       parts.push(...envParts);
 
-      // Add Grid Reference for geometric correction
       if (gridImage) {
         const gridBase64 = await fileToBase64(gridImage);
         parts.push({
@@ -158,17 +163,19 @@ Note: The final output image MUST NOT contain any visible grid lines. (注：最
         }
       });
 
-      let genUrl = null;
+      let rawUrl = null;
       for (const part of response.candidates?.[0]?.content?.parts || []) {
         if (part.inlineData) {
-          genUrl = `data:image/png;base64,${part.inlineData.data}`;
+          rawUrl = `data:image/png;base64,${part.inlineData.data}`;
           break;
         }
       }
 
-      if (genUrl) {
-        setFinalPanorama(genUrl);
-        setStatus("生成完成！");
+      if (rawUrl) {
+        setStatus("正在优化全景比例...");
+        const paddedUrl = await padImageTo21Ratio(rawUrl);
+        setFinalPanorama(paddedUrl);
+        setStatus("生成并补全完成！");
       } else {
         throw new Error("未能生成图片");
       }
@@ -214,17 +221,19 @@ Note: The final output image MUST NOT contain any visible grid lines. (注：最
         }
       });
 
-      let editUrl = null;
+      let rawEditUrl = null;
       for (const part of response.candidates?.[0]?.content?.parts || []) {
         if (part.inlineData) {
-          editUrl = `data:image/png;base64,${part.inlineData.data}`;
+          rawEditUrl = `data:image/png;base64,${part.inlineData.data}`;
           break;
         }
       }
 
-      if (editUrl) {
-        setFinalPanorama(editUrl);
-        setStatus("编辑完成！");
+      if (rawEditUrl) {
+        setStatus("正在优化编辑后的比例...");
+        const paddedUrl = await padImageTo21Ratio(rawEditUrl);
+        setFinalPanorama(paddedUrl);
+        setStatus("编辑并补全完成！");
         setEditPrompt("");
       } else {
         throw new Error("未能编辑图片");
