@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { GoogleGenAI } from '@google/genai';
-import { Upload, Image as ImageIcon, Loader2, Settings, Key, Maximize, Edit2, Trash2, Grid, PlayCircle } from 'lucide-react';
+import { Upload, Image as ImageIcon, Loader2, Settings, Key, Maximize, Edit2, Trash2, Grid, PlayCircle, ToggleLeft, ToggleRight, Crop } from 'lucide-react';
 import PhotoSphereViewerComponent from './components/PhotoSphereViewer';
 import { cn, padImageTo21Ratio } from './lib/utils';
 
@@ -35,6 +35,7 @@ Note: The final output image MUST NOT contain any visible grid lines. (注：最
   const [finalPanorama, setFinalPanorama] = useState<string | null>(null);
   const [imageSize, setImageSize] = useState<"1K" | "2K" | "4K">("1K");
   const [selectedModel, setSelectedModel] = useState("gemini-3-pro-image-preview");
+  const [autoPadding, setAutoPadding] = useState(true);
   const [status, setStatus] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   
@@ -52,7 +53,6 @@ Note: The final output image MUST NOT contain any visible grid lines. (注：最
     };
     checkKey();
 
-    // Load default grid reference image on mount
     const loadDefaultGrid = async () => {
       const gridUrl = window.location.origin + "/grid-reference.jpg";
       try {
@@ -74,48 +74,69 @@ Note: The final output image MUST NOT contain any visible grid lines. (注：最
     }
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      const files = Array.from(e.target.files).slice(0, 14); // Max 14 images
-      setSourceImages(prev => [...prev, ...files].slice(0, 14));
+  const handleManualPadding = async () => {
+    if (!finalPanorama) return;
+    setStatus("正在优化全景比例 (2:1)...");
+    try {
+      const padded = await padImageTo21Ratio(finalPanorama);
+      setFinalPanorama(padded);
+      setStatus("比例优化完成");
+    } catch (e) {
+      setStatus("比例优化失败");
     }
-  };
-
-  const removeImage = (index: number) => {
-    setSourceImages(prev => prev.filter((_, i) => i !== index));
   };
 
   const handleLoadDemo = async () => {
     const demoUrl = window.location.origin + "/demo-panorama.png";
     const gridUrl = window.location.origin + "/grid-reference.jpg";
     
-    console.log("Loading demo from:", demoUrl);
-    
-    setStatus("正在预处理演示全景图...");
+    setStatus("正在处理演示数据...");
     try {
-      // Test the padding logic even for the demo
-      const paddedDemo = await padImageTo21Ratio(demoUrl);
-      setFinalPanorama(paddedDemo);
-    } catch (e) {
-      setFinalPanorama(demoUrl);
-    }
-    
-    fetch(gridUrl)
-      .then(res => res.blob())
-      .then(blob => {
-        const file = new File([blob], "grid-reference.jpg", { type: "image/jpeg" });
-        setGridImage(file);
-      });
-
-    setStatus("已加载演示全景图与网格参考");
-    
-    const demoDescription = "一个极具电影感的 360° 全景蒸汽朋克场景。主体是一颗带有宏伟环系的巨大行星，背景布满了飞行的飞艇、错落有致的砖石与金属构筑的塔楼，呈现出史诗般的环境。";
-    setFusedDescription(`Create a high-quality, seamless, equirectangular 360-degree panorama image. (创建一个高质量、无缝的、等距柱状投影 360 度全景图像。)
+      if (autoPadding) {
+        const paddedDemo = await padImageTo21Ratio(demoUrl);
+        setFinalPanorama(paddedDemo);
+      } else {
+        setFinalPanorama(demoUrl);
+      }
+      
+      const res = await fetch(gridUrl);
+      const blob = await res.blob();
+      const file = new File([blob], "grid-reference.jpg", { type: "image/jpeg" });
+      setGridImage(file);
+      
+      const demoDesc = "一个极具电影感的 360° 全景蒸汽朋克场景。主体是一颗带有宏伟环系的巨大行星，背景布满了飞行的飞艇、错落有致的砖石与金属构筑的塔楼，呈现出史诗般的环境。";
+      setFusedDescription(`Create a high-quality, seamless, equirectangular 360-degree panorama image. (创建一个高质量、无缝的、等距柱状投影 360 度全景图像。)
 The style should be a professional HDRI environment map. (风格应为专业的 HDRI 环境贴图。)
-Subject: ${demoDescription}. (主体内容：${demoDescription}。)
+Subject: ${demoDesc}. (主体内容：${demoDesc}。)
 Ensure the image has a 2:1 aspect ratio. (确保图像比例为 2:1。)
 Ensure the top and bottom are properly distorted for spherical mapping and the left/right edges wrap perfectly. (确保顶部和底部针对球形映射进行了正确的畸变处理，且左右边缘完美衔接。)
 Note: The final output image MUST NOT contain any visible grid lines. (注：最终输出图片绝对不能包含任何可见的网格线。)`);
+      
+      setStatus("演示场景加载成功");
+    } catch (e) {
+      console.error(e);
+      setStatus("加载演示失败");
+    }
+  };
+
+  const handleLocalLoad = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      try {
+        const base64 = await fileToBase64(file);
+        if (autoPadding) {
+          setStatus("正在自动优化比例...");
+          const padded = await padImageTo21Ratio(base64);
+          setFinalPanorama(padded);
+          setStatus("本地图片加载并优化成功");
+        } else {
+          setFinalPanorama(base64);
+          setStatus("已加载本地原图");
+        }
+      } catch (err) {
+        setStatus("加载本地图片失败");
+      }
+    }
   };
 
   const handleGenerate = async () => {
@@ -130,37 +151,21 @@ Note: The final output image MUST NOT contain any visible grid lines. (注：最
       setStatus("正在绘制全景图...");
       
       const parts: any[] = [{ text: fusedDescription }];
-      
       const envParts = await Promise.all(sourceImages.map(async (file) => {
         const base64 = await fileToBase64(file);
-        return {
-          inlineData: {
-            data: base64.split(',')[1],
-            mimeType: file.type
-          }
-        };
+        return { inlineData: { data: base64.split(',')[1], mimeType: file.type } };
       }));
       parts.push(...envParts);
 
       if (gridImage) {
         const gridBase64 = await fileToBase64(gridImage);
-        parts.push({
-          inlineData: {
-            data: gridBase64.split(',')[1],
-            mimeType: gridImage.type
-          }
-        });
+        parts.push({ inlineData: { data: gridBase64.split(',')[1], mimeType: gridImage.type } });
       }
 
       const response = await ai.models.generateContent({
         model: selectedModel,
         contents: [{ role: 'user', parts: parts }],
-        config: {
-          imageConfig: {
-            aspectRatio: "21:9",
-            imageSize: imageSize
-          }
-        }
+        config: { imageConfig: { aspectRatio: "21:9", imageSize: imageSize } }
       });
 
       let rawUrl = null;
@@ -172,14 +177,18 @@ Note: The final output image MUST NOT contain any visible grid lines. (注：最
       }
 
       if (rawUrl) {
-        setStatus("正在优化全景比例...");
-        const paddedUrl = await padImageTo21Ratio(rawUrl);
-        setFinalPanorama(paddedUrl);
-        setStatus("生成并补全完成！");
+        if (autoPadding) {
+          setStatus("正在自动补全 2:1 比例...");
+          const paddedUrl = await padImageTo21Ratio(rawUrl);
+          setFinalPanorama(paddedUrl);
+          setStatus("生成并补全完成！");
+        } else {
+          setFinalPanorama(rawUrl);
+          setStatus("生成完成 (原始比例)！");
+        }
       } else {
         throw new Error("未能生成图片");
       }
-
     } catch (error: any) {
       console.error("生成失败:", error);
       setStatus(`处理失败: ${error?.message || "请检查配置"}`);
@@ -195,30 +204,16 @@ Note: The final output image MUST NOT contain any visible grid lines. (注：最
     
     try {
       const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) throw new Error("GEMINI_API_KEY 未配置");
-      
-      const ai = new GoogleGenAI({ apiKey });
+      const ai = new GoogleGenAI({ apiKey: apiKey! });
       const base64Data = finalPanorama.split(',')[1];
       const mimeType = finalPanorama.split(';')[0].split(':')[1];
 
-      const parts: any[] = [
-        { text: editPrompt },
-        {
-          inlineData: {
-            data: base64Data,
-            mimeType: mimeType,
-          },
-        }
-      ];
+      const parts: any[] = [{ text: editPrompt }, { inlineData: { data: base64Data, mimeType: mimeType } }];
 
       const response = await ai.models.generateContent({
         model: selectedModel,
         contents: [{ role: 'user', parts: parts }],
-        config: {
-          imageConfig: {
-            aspectRatio: "21:9",
-          }
-        }
+        config: { imageConfig: { aspectRatio: "21:9" } }
       });
 
       let rawEditUrl = null;
@@ -230,17 +225,19 @@ Note: The final output image MUST NOT contain any visible grid lines. (注：最
       }
 
       if (rawEditUrl) {
-        setStatus("正在优化编辑后的比例...");
-        const paddedUrl = await padImageTo21Ratio(rawEditUrl);
-        setFinalPanorama(paddedUrl);
-        setStatus("编辑并补全完成！");
+        if (autoPadding) {
+          const paddedUrl = await padImageTo21Ratio(rawEditUrl);
+          setFinalPanorama(paddedUrl);
+          setStatus("编辑并补全完成！");
+        } else {
+          setFinalPanorama(rawEditUrl);
+          setStatus("编辑完成！");
+        }
         setEditPrompt("");
-      } else {
-        throw new Error("未能编辑图片");
       }
     } catch (error: any) {
       console.error("编辑失败:", error);
-      setStatus(`编辑失败: ${error?.message || "请检查配置"}`);
+      setStatus(`编辑失败: ${error?.message}`);
     } finally {
       setIsEditing(false);
     }
@@ -250,26 +247,12 @@ Note: The final output image MUST NOT contain any visible grid lines. (注：最
     return (
       <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-4 font-sans">
         <div className="max-w-md w-full bg-zinc-900 border border-zinc-800 rounded-2xl p-8 text-center space-y-6 shadow-2xl">
-          <div className="w-16 h-16 bg-blue-500/10 text-blue-400 rounded-full flex items-center justify-center mx-auto">
-            <Key className="w-8 h-8" />
-          </div>
+          <div className="w-16 h-16 bg-blue-500/10 text-blue-400 rounded-full flex items-center justify-center mx-auto"><Key className="w-8 h-8" /></div>
           <div className="space-y-2">
             <h1 className="text-2xl font-bold tracking-tight">配置 API Key</h1>
-            <p className="text-zinc-400 text-sm">
-              使用专业级图像生成模型 (Gemini 3 Pro Image) 需要您提供自己的 Google Cloud API Key。请确保您的项目已启用计费。
-            </p>
+            <p className="text-zinc-400 text-sm">使用专业级图像生成模型需要您提供自己的 Google Cloud API Key。</p>
           </div>
-          <button
-            onClick={handleSelectKey}
-            className="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-3 px-4 rounded-xl transition-colors"
-          >
-            选择 API Key
-          </button>
-          <p className="text-xs text-zinc-500">
-            <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noreferrer" className="underline hover:text-zinc-400">
-              了解计费详情
-            </a>
-          </p>
+          <button onClick={handleSelectKey} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-3 px-4 rounded-xl transition-colors">选择 API Key</button>
         </div>
       </div>
     );
@@ -284,48 +267,48 @@ Note: The final output image MUST NOT contain any visible grid lines. (注：最
             <p className="text-zinc-400 mt-1">专业级全景环境贴图生成器</p>
           </div>
           <div className="flex items-center gap-4">
-            <button
-              onClick={handleLoadDemo}
-              className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-medium py-2.5 px-4 rounded-xl transition-colors flex items-center gap-2 border border-zinc-700"
-            >
-              <PlayCircle className="w-5 h-5" />
-              加载演示
+            <button onClick={handleLoadDemo} className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-medium py-2.5 px-4 rounded-xl transition-colors flex items-center gap-2 border border-zinc-700">
+              <PlayCircle className="w-5 h-5 text-orange-400" />加载演示
             </button>
-            <select
-              value={selectedModel}
-              onChange={(e) => setSelectedModel(e.target.value)}
-              className="bg-zinc-900 border border-zinc-800 text-zinc-200 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5 outline-none"
-            >
+            <div className="relative group">
+              <button onClick={() => document.getElementById('local-load')?.click()} className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-medium py-2.5 px-4 rounded-xl transition-colors flex items-center gap-2 border border-zinc-700">
+                <Upload className="w-5 h-5 text-blue-400" />本地全景图
+              </button>
+              <input id="local-load" type="file" accept="image/*" className="hidden" onChange={handleLocalLoad} />
+            </div>
+            <div className="flex items-center gap-2 bg-zinc-900/50 border border-zinc-800 px-3 py-2 rounded-xl">
+              <span className="text-xs text-zinc-400 uppercase tracking-wider font-bold">自动补全</span>
+              <button onClick={() => setAutoPadding(!autoPadding)} className="text-blue-400 hover:text-blue-300 transition-colors">
+                {autoPadding ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6 text-zinc-600" />}
+              </button>
+            </div>
+            <select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} className="bg-zinc-900 border border-zinc-800 text-zinc-200 text-sm rounded-lg p-2.5 outline-none">
               <option value="gemini-3-pro-image-preview">Gemini 3 Pro Image</option>
               <option value="gemini-3.1-flash-image-preview">Gemini 3.1 Flash Image</option>
             </select>
-            <select
-              value={imageSize}
-              onChange={(e) => setImageSize(e.target.value as any)}
-              className="bg-zinc-900 border border-zinc-800 text-zinc-200 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5 outline-none"
-            >
+            <select value={imageSize} onChange={(e) => setImageSize(e.target.value as any)} className="bg-zinc-900 border border-zinc-800 text-zinc-200 text-sm rounded-lg p-2.5 outline-none">
               <option value="1K">1K 分辨率</option>
               <option value="2K">2K 分辨率</option>
               <option value="4K">4K 分辨率</option>
             </select>
-            <button
-              onClick={handleGenerate}
-              disabled={isProcessing || sourceImages.length === 0}
-              className="bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-white font-medium py-2.5 px-6 rounded-xl transition-colors flex items-center gap-2"
-            >
+            <button onClick={handleGenerate} disabled={isProcessing || sourceImages.length === 0} className="bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-white font-medium py-2.5 px-6 rounded-xl transition-colors flex items-center gap-2">
               {isProcessing ? <Loader2 className="w-5 h-5 animate-spin" /> : <ImageIcon className="w-5 h-5" />}
               {isProcessing ? '处理中...' : '开始分析与生成'}
             </button>
           </div>
         </header>
 
-        {/* Top: Immersive 360 Viewer */}
         {finalPanorama && (
           <section className="bg-zinc-900/30 border border-zinc-800/50 rounded-3xl p-2 shadow-2xl backdrop-blur-sm">
             <div className="bg-zinc-950 rounded-2xl overflow-hidden relative">
-              <div className="absolute top-4 left-4 z-10 bg-black/50 backdrop-blur-md border border-white/10 rounded-full px-4 py-2 flex items-center gap-2 shadow-lg">
-                <Maximize className="w-4 h-4 text-orange-400" />
-                <span className="text-sm font-medium text-white tracking-wide">沉浸式 360° 预览</span>
+              <div className="absolute top-4 left-4 z-10 flex items-center gap-2">
+                <div className="bg-black/50 backdrop-blur-md border border-white/10 rounded-full px-4 py-2 flex items-center gap-2 shadow-lg">
+                  <Maximize className="w-4 h-4 text-orange-400" />
+                  <span className="text-sm font-medium text-white tracking-wide">沉浸式 360° 预览</span>
+                </div>
+                <button onClick={handleManualPadding} className="bg-blue-600/80 hover:bg-blue-500 backdrop-blur-md border border-blue-400/30 rounded-full px-4 py-2 flex items-center gap-2 shadow-lg text-sm font-medium text-white transition-all hover:scale-105">
+                  <Crop className="w-4 h-4" />优化比例 (2:1)
+                </button>
               </div>
               <PhotoSphereViewerComponent src={finalPanorama} />
             </div>
@@ -333,38 +316,25 @@ Note: The final output image MUST NOT contain any visible grid lines. (注：最
         )}
 
         <main className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Left Column: Upload & Description */}
           <div className="space-y-6">
             <section className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6">
-              <h2 className="text-lg font-medium mb-4 flex items-center gap-2">
-                <Upload className="w-5 h-5 text-blue-400" />
-                环境参考图 (1-14张)
-              </h2>
-              <div 
-                className="border-2 border-dashed border-zinc-700 hover:border-blue-500 transition-colors rounded-xl p-8 text-center cursor-pointer"
-                onClick={() => document.getElementById('file-upload')?.click()}
-              >
-                <input 
-                  id="file-upload" 
-                  type="file" 
-                  multiple 
-                  accept="image/*" 
-                  className="hidden" 
-                  onChange={handleFileChange} 
-                />
+              <h2 className="text-lg font-medium mb-4 flex items-center gap-2"><Upload className="w-5 h-5 text-blue-400" />环境参考图 (1-14张)</h2>
+              <div className="border-2 border-dashed border-zinc-700 hover:border-blue-500 transition-colors rounded-xl p-8 text-center cursor-pointer" onClick={() => document.getElementById('file-upload')?.click()}>
+                <input id="file-upload" type="file" multiple accept="image/*" className="hidden" onChange={(e) => {
+                  if (e.target.files) {
+                    const files = Array.from(e.target.files).slice(0, 14);
+                    setSourceImages(prev => [...prev, ...files].slice(0, 14));
+                  }
+                }} />
                 <Upload className="w-8 h-8 text-zinc-500 mx-auto mb-3" />
                 <p className="text-sm text-zinc-400">点击或拖拽图片至此处</p>
               </div>
-              
               {sourceImages.length > 0 && (
                 <div className="mt-4 grid grid-cols-4 gap-3">
                   {sourceImages.map((file, idx) => (
                     <div key={idx} className="relative aspect-square rounded-lg overflow-hidden border border-zinc-800 group">
                       <img src={URL.createObjectURL(file)} alt="" className="w-full h-full object-cover" />
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); removeImage(idx); }}
-                        className="absolute top-1 right-1 bg-black/60 p-1 rounded-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/80"
-                      >
+                      <button onClick={(e) => { e.stopPropagation(); setSourceImages(prev => prev.filter((_, i) => i !== idx)); }} className="absolute top-1 right-1 bg-black/60 p-1 rounded-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/80">
                         <Trash2 className="w-4 h-4 text-white" />
                       </button>
                     </div>
@@ -372,100 +342,50 @@ Note: The final output image MUST NOT contain any visible grid lines. (注：最
                 </div>
               )}
             </section>
-
             <section className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6">
-              <h2 className="text-lg font-medium mb-4 flex items-center gap-2">
-                <Grid className="w-5 h-5 text-orange-400" />
-                网格参考图 (用于几何纠正)
-              </h2>
+              <h2 className="text-lg font-medium mb-4 flex items-center gap-2"><Grid className="w-5 h-5 text-orange-400" />网格参考图 (用于几何纠正)</h2>
               {gridImage ? (
                 <div className="relative aspect-video rounded-lg overflow-hidden border border-zinc-800 group">
                   <img src={URL.createObjectURL(gridImage)} alt="Grid" className="w-full h-full object-cover" />
-                  <button 
-                    onClick={() => setGridImage(null)}
-                    className="absolute top-2 right-2 bg-black/60 p-2 rounded-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/80"
-                  >
+                  <button onClick={() => setGridImage(null)} className="absolute top-2 right-2 bg-black/60 p-2 rounded-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/80">
                     <Trash2 className="w-4 h-4 text-white" />
                   </button>
                 </div>
               ) : (
-                <div 
-                  className="border-2 border-dashed border-zinc-700 hover:border-orange-500 transition-colors rounded-xl p-8 text-center cursor-pointer"
-                  onClick={() => document.getElementById('grid-upload')?.click()}
-                >
-                  <input 
-                    id="grid-upload" 
-                    type="file" 
-                    accept="image/*" 
-                    className="hidden" 
-                    onChange={(e) => {
-                      if (e.target.files?.[0]) {
-                        setGridImage(e.target.files[0]);
-                      }
-                    }} 
-                  />
+                <div className="border-2 border-dashed border-zinc-700 hover:border-orange-500 transition-colors rounded-xl p-8 text-center cursor-pointer" onClick={() => document.getElementById('grid-upload')?.click()}>
+                  <input id="grid-upload" type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && setGridImage(e.target.files[0])} />
                   <Upload className="w-8 h-8 text-zinc-500 mx-auto mb-3" />
                   <p className="text-sm text-zinc-400">点击或拖拽网格图至此处</p>
                 </div>
               )}
             </section>
-
             <section className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6 flex flex-col h-[300px]">
-              <h2 className="text-lg font-medium mb-4 flex items-center gap-2">
-                <Settings className="w-5 h-5 text-purple-400" />
-                场景融合描述 (可手动微调)
-              </h2>
-              <textarea
-                value={fusedDescription}
-                onChange={(e) => setFusedDescription(e.target.value)}
-                placeholder="AI 将在此处生成场景描述，您也可以手动输入..."
-                className="flex-1 w-full bg-zinc-950 border border-zinc-800 rounded-xl p-4 text-zinc-300 text-sm resize-none focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none"
-              />
+              <h2 className="text-lg font-medium mb-4 flex items-center gap-2"><Settings className="w-5 h-5 text-purple-400" />场景融合描述 (可手动微调)</h2>
+              <textarea value={fusedDescription} onChange={(e) => setFusedDescription(e.target.value)} placeholder="AI 将在此处生成场景描述..." className="flex-1 w-full bg-zinc-950 border border-zinc-800 rounded-xl p-4 text-zinc-300 text-sm resize-none focus:ring-2 focus:ring-purple-500 outline-none" />
             </section>
           </div>
 
-          {/* Right Column: Generated Image & Status */}
           <div className="space-y-6">
             <section className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6 h-full flex flex-col">
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-medium flex items-center gap-2">
-                  <ImageIcon className="w-5 h-5 text-emerald-400" />
-                  生成的平面图
-                </h2>
-                {status && (
-                  <span className="text-sm px-3 py-1 bg-zinc-800 rounded-full text-zinc-300 flex items-center gap-2">
-                    {(isProcessing || isEditing) && <Loader2 className="w-3 h-3 animate-spin" />}
-                    {status}
-                  </span>
-                )}
+                <h2 className="text-lg font-medium flex items-center gap-2"><ImageIcon className="w-5 h-5 text-emerald-400" />生成的平面图</h2>
+                <div className="flex items-center gap-3">
+                  {status && (
+                    <span className="text-sm px-3 py-1 bg-zinc-800 rounded-full text-zinc-300 flex items-center gap-2">
+                      {(isProcessing || isEditing) && <Loader2 className="w-3 h-3 animate-spin" />}
+                      {status}
+                    </span>
+                  )}
+                </div>
               </div>
-              
               <div className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl overflow-hidden flex items-center justify-center relative min-h-[300px]">
-                {finalPanorama ? (
-                  <img src={finalPanorama} alt="Generated Panorama" className="w-full h-full object-contain" />
-                ) : (
-                  <p className="text-zinc-600 text-sm">暂无生成的全景图</p>
-                )}
+                {finalPanorama ? <img src={finalPanorama} alt="Generated" className="w-full h-full object-contain" /> : <p className="text-zinc-600 text-sm">暂无生成的全景图</p>}
               </div>
-
-              {/* Edit Section */}
               {finalPanorama && (
                 <div className="mt-4 pt-4 border-t border-zinc-800 flex gap-3">
-                  <input
-                    type="text"
-                    value={editPrompt}
-                    onChange={(e) => setEditPrompt(e.target.value)}
-                    placeholder="输入提示词修改全景图 (例如: '添加一轮明月')..."
-                    className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2 text-sm text-zinc-200 focus:ring-2 focus:ring-blue-500 outline-none"
-                    onKeyDown={(e) => e.key === 'Enter' && handleEdit()}
-                  />
-                  <button
-                    onClick={handleEdit}
-                    disabled={isEditing || !editPrompt}
-                    className="bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg flex items-center gap-2 text-sm transition-colors"
-                  >
-                    {isEditing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Edit2 className="w-4 h-4" />}
-                    修改
+                  <input type="text" value={editPrompt} onChange={(e) => setEditPrompt(e.target.value)} placeholder="输入提示词修改全景图..." className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2 text-sm text-zinc-200 focus:ring-2 focus:ring-blue-500 outline-none" onKeyDown={(e) => e.key === 'Enter' && handleEdit()} />
+                  <button onClick={handleEdit} disabled={isEditing || !editPrompt} className="bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg flex items-center gap-2 text-sm transition-colors">
+                    {isEditing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Edit2 className="w-4 h-4" />}修改
                   </button>
                 </div>
               )}
