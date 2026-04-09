@@ -44,16 +44,10 @@ Note: The final output image MUST NOT contain any visible grid lines. (注：最
 
   useEffect(() => {
     const checkKey = async () => {
-      // 优先检查 Vite 环境变量 (构建时注入)
-      const envKey = import.meta.env.VITE_GEMINI_API_KEY;
-      
-      if (envKey) {
-        setHasKey(true);
-      } else if (window.aistudio?.hasSelectedApiKey) {
+      if (window.aistudio?.hasSelectedApiKey) {
         const has = await window.aistudio.hasSelectedApiKey();
         setHasKey(has);
       } else {
-        // 兼容 process.env (本地开发)
         setHasKey(!!process.env.GEMINI_API_KEY);
       }
     };
@@ -150,8 +144,7 @@ Note: The final output image MUST NOT contain any visible grid lines. (注：最
     setIsProcessing(true);
     
     try {
-      // 优先获取 Vite 环境变量，否则回退到 process.env
-      const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+      const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) throw new Error("GEMINI_API_KEY 未配置");
       
       const ai = new GoogleGenAI({ apiKey });
@@ -210,7 +203,7 @@ Note: The final output image MUST NOT contain any visible grid lines. (注：最
     setStatus("正在编辑全景图...");
     
     try {
-      const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+      const apiKey = process.env.GEMINI_API_KEY;
       const ai = new GoogleGenAI({ apiKey: apiKey! });
       const base64Data = finalPanorama.split(',')[1];
       const mimeType = finalPanorama.split(';')[0].split(':')[1];
