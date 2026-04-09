@@ -60,7 +60,9 @@ Note: The final output image MUST NOT contain any visible grid lines. (注：最
     checkKey();
 
     const loadDefaultGrid = async () => {
-      const gridUrl = window.location.origin + "/grid-reference.jpg";
+      // 使用 Vite 的 BASE_URL 自动适配 GitHub Pages 子路径
+      const baseUrl = import.meta.env.BASE_URL;
+      const gridUrl = `${window.location.origin}${baseUrl}grid-reference.jpg`;
       try {
         const res = await fetch(gridUrl);
         const blob = await res.blob();
@@ -93,8 +95,9 @@ Note: The final output image MUST NOT contain any visible grid lines. (注：最
   };
 
   const handleLoadDemo = async () => {
-    const demoUrl = window.location.origin + "/demo-panorama.png";
-    const gridUrl = window.location.origin + "/grid-reference.jpg";
+    const baseUrl = import.meta.env.BASE_URL;
+    const demoUrl = `${window.location.origin}${baseUrl}demo-panorama.png`;
+    const gridUrl = `${window.location.origin}${baseUrl}grid-reference.jpg`;
     
     setStatus("正在处理演示数据...");
     try {
